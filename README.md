@@ -1,22 +1,20 @@
-# k37 – Mini Games
+# k37 – Real Carrom
+
+Classic Indian Carrom board game.
 
 ## Play
+Open **`carrom.html`** (or `index.html` – redirects to Carrom).
 
-Open **index.html** → choose a game.
-
-| File | Game |
-|------|------|
-| `index.html` | Menu (choose game) |
-| **`carrom.html`** | **Real Carrom** – physics, Queen, turns |
-| `runner.html` | Temple Run 3D – aliens, fox chase |
-
-## Carrom
-- Drag striker on baseline to position
-- Pull back to aim & set power, release to shoot
-- Pocket your coins + cover the Queen to win
+## Features
+- Full board graphics (wood, cloth, pockets)
+- Real physics: collisions, friction, wall bounce
 - White vs Black turns
+- Queen + cover rules
+- Striker aim & power (drag to shoot)
+- Mobile & desktop support
 
-## Temple Run 3D
-- Arrow keys / swipe: lanes, jump, slide
-- Collect coins, avoid obstacles
-- Sudden aliens & fox chase
+## Controls
+1. Drag striker on your baseline to position
+2. Pull back to aim and set power
+3. Release to shoot
+4. Pocket your coins and cover the Queen to win
