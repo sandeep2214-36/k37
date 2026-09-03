@@ -171,11 +171,11 @@
     const COIN_R = 14;
     const STRIKER_R = 18;
     const QUEEN_R = 14;
-    const FRICTION = 0.55;           // per-second linear damping (stronger = stops faster)
-    const MIN_SPEED = 0.15;
-    const MAX_POWER = 42;
-    const RESTITUTION = 0.88;
-    const WALL_BOUNCE = 0.82;
+    const FRICTION_K = 1.35;         // exponential damping: v *= exp(-k*dt)
+    const MIN_SPEED = 8;             // stop when slower than this (units/sec)
+    const MAX_SPEED = 920;           // max striker speed units/sec
+    const RESTITUTION = 0.9;
+    const WALL_BOUNCE = 0.88;
 
     // Colors
     const WOOD_DARK = '#3d2b1f';
@@ -303,11 +303,17 @@
     // ============================================================
     function updatePhysics(dt) {
       const pieces = getActivePieces();
-      const steps = 6; // sub-steps for stable collisions
+      // More substeps when anything is moving fast (prevent tunneling)
+      let maxV = 0;
+      for (const p of pieces) {
+        if (p.pocketed) continue;
+        maxV = Math.max(maxV, Math.hypot(p.vx, p.vy));
+      }
+      const steps = maxV > 400 ? 12 : maxV > 200 ? 8 : 5;
       const h = dt / steps;
 
-      // Frame-rate independent friction factor (once per frame)
-      const frictionFactor = Math.pow(1 - FRICTION, dt);
+      // Frame-rate independent friction
+      const frictionFactor = Math.exp(-FRICTION_K * dt);
 
       for (let s = 0; s < steps; s++) {
         // Integrate positions
@@ -588,8 +594,10 @@
         aimCurrent = pos;
         const dx = aimStart.x - pos.x;
         const dy = aimStart.y - pos.y;
-        power = Math.min(MAX_POWER, Math.hypot(dx, dy) * 0.32);
-        document.getElementById('power-bar').style.width = (power / MAX_POWER * 100) + '%';
+        const pull = Math.hypot(dx, dy);
+        // Map pull distance (0–180px board units) → 0–1 power
+        power = Math.min(1, pull / 140);
+        document.getElementById('power-bar').style.width = (power * 100) + '%';
       }
     }
 
@@ -599,11 +607,12 @@
       aiming = false;
       document.getElementById('power-bar-wrap').classList.remove('show');
 
-      if (power > 0.8) {
+      if (power > 0.06 && aimCurrent) {
         const dx = aimStart.x - aimCurrent.x;
         const dy = aimStart.y - aimCurrent.y;
         const len = Math.hypot(dx, dy) || 1;
-        const speed = Math.max(power, 4); // ensure minimum hit strength
+        // power 0..1 → speed up to MAX_SPEED
+        const speed = 120 + power * (MAX_SPEED - 120);
         striker.vx = (dx / len) * speed;
         striker.vy = (dy / len) * speed;
         gameState = 'shooting';
@@ -857,7 +866,7 @@
     }
 
     function drawAim() {
-      if (!aiming || !aimStart || !aimCurrent || power < 0.5) return;
+      if (!aiming || !aimStart || !aimCurrent || power < 0.04) return;
 
       const dx = aimStart.x - aimCurrent.x;
       const dy = aimStart.y - aimCurrent.y;
@@ -865,24 +874,26 @@
       const ux = dx / len;
       const uy = dy / len;
 
+      const lineLen = 60 + power * 160;
+
       // Aim line
-      ctx.strokeStyle = `rgba(255,215,0,${0.3 + power / MAX_POWER * 0.5})`;
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = `rgba(255,215,0,${0.35 + power * 0.55})`;
+      ctx.lineWidth = 2.5;
       ctx.setLineDash([8, 6]);
       ctx.beginPath();
       ctx.moveTo(striker.x, striker.y);
-      ctx.lineTo(striker.x + ux * (80 + power * 4), striker.y + uy * (80 + power * 4));
+      ctx.lineTo(striker.x + ux * lineLen, striker.y + uy * lineLen);
       ctx.stroke();
       ctx.setLineDash([]);
 
       // Arrow head
-      const ax = striker.x + ux * (70 + power * 3.5);
-      const ay = striker.y + uy * (70 + power * 3.5);
-      ctx.fillStyle = 'rgba(255,215,0,0.8)';
+      const ax = striker.x + ux * (lineLen - 8);
+      const ay = striker.y + uy * (lineLen - 8);
+      ctx.fillStyle = 'rgba(255,215,0,0.9)';
       ctx.beginPath();
-      ctx.moveTo(ax + ux * 12, ay + uy * 12);
-      ctx.lineTo(ax - uy * 7, ay + ux * 7);
-      ctx.lineTo(ax + uy * 7, ay - ux * 7);
+      ctx.moveTo(ax + ux * 14, ay + uy * 14);
+      ctx.lineTo(ax - uy * 8, ay + ux * 8);
+      ctx.lineTo(ax + uy * 8, ay - ux * 8);
       ctx.closePath();
       ctx.fill();
     }
