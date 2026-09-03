@@ -171,11 +171,11 @@
     const COIN_R = 14;
     const STRIKER_R = 18;
     const QUEEN_R = 14;
-    const FRICTION = 0.985;
-    const MIN_SPEED = 0.08;
-    const MAX_POWER = 28;
-    const RESTITUTION = 0.92;
-    const WALL_BOUNCE = 0.85;
+    const FRICTION = 0.55;           // per-second linear damping (stronger = stops faster)
+    const MIN_SPEED = 0.15;
+    const MAX_POWER = 42;
+    const RESTITUTION = 0.88;
+    const WALL_BOUNCE = 0.82;
 
     // Colors
     const WOOD_DARK = '#3d2b1f';
@@ -258,17 +258,18 @@
       // Queen in center
       queen = makePiece(cx, cy, QUEEN_R, '#c0392b', 'queen');
 
-      // Surrounding coins in a flower pattern
+      // Surrounding coins in a flower pattern (no overlaps)
       const positions = [];
+      const gap = COIN_R * 2 + 2;
       // Inner ring (around queen)
       for (let i = 0; i < 6; i++) {
         const a = (i / 6) * Math.PI * 2 - Math.PI / 2;
-        positions.push({ x: cx + Math.cos(a) * 32, y: cy + Math.sin(a) * 32 });
+        positions.push({ x: cx + Math.cos(a) * (QUEEN_R + COIN_R + 4), y: cy + Math.sin(a) * (QUEEN_R + COIN_R + 4) });
       }
       // Outer ring
       for (let i = 0; i < 12; i++) {
-        const a = (i / 12) * Math.PI * 2;
-        positions.push({ x: cx + Math.cos(a) * 58, y: cy + Math.sin(a) * 58 });
+        const a = (i / 12) * Math.PI * 2 + Math.PI / 12;
+        positions.push({ x: cx + Math.cos(a) * (QUEEN_R + COIN_R * 3 + 10), y: cy + Math.sin(a) * (QUEEN_R + COIN_R * 3 + 10) });
       }
 
       // Alternate white / black
@@ -302,52 +303,46 @@
     // ============================================================
     function updatePhysics(dt) {
       const pieces = getActivePieces();
-      const steps = 4; // sub-steps for stability
+      const steps = 6; // sub-steps for stable collisions
       const h = dt / steps;
 
+      // Frame-rate independent friction factor (once per frame)
+      const frictionFactor = Math.pow(1 - FRICTION, dt);
+
       for (let s = 0; s < steps; s++) {
-        // Move
+        // Integrate positions
         for (const p of pieces) {
           if (p.pocketed) continue;
           p.x += p.vx * h;
           p.y += p.vy * h;
-
-          // Friction
-          p.vx *= FRICTION;
-          p.vy *= FRICTION;
-          if (Math.hypot(p.vx, p.vy) < MIN_SPEED) {
-            p.vx = 0;
-            p.vy = 0;
-          }
         }
 
-        // Wall collisions (board edges, not pockets)
+        // Wall collisions
         for (const p of pieces) {
           if (p.pocketed) continue;
           const min = RIM + p.r;
           const max = BOARD - RIM - p.r;
 
-          // Only bounce if not near a pocket
           if (p.x < min) {
             if (!nearPocket(p.x, p.y)) {
               p.x = min;
-              p.vx = -p.vx * WALL_BOUNCE;
+              p.vx = Math.abs(p.vx) * WALL_BOUNCE;
             }
           } else if (p.x > max) {
             if (!nearPocket(p.x, p.y)) {
               p.x = max;
-              p.vx = -p.vx * WALL_BOUNCE;
+              p.vx = -Math.abs(p.vx) * WALL_BOUNCE;
             }
           }
           if (p.y < min) {
             if (!nearPocket(p.x, p.y)) {
               p.y = min;
-              p.vy = -p.vy * WALL_BOUNCE;
+              p.vy = Math.abs(p.vy) * WALL_BOUNCE;
             }
           } else if (p.y > max) {
             if (!nearPocket(p.x, p.y)) {
               p.y = max;
-              p.vy = -p.vy * WALL_BOUNCE;
+              p.vy = -Math.abs(p.vy) * WALL_BOUNCE;
             }
           }
         }
@@ -367,6 +362,17 @@
           if (inPocket(p.x, p.y, p.r)) {
             pocketPiece(p);
           }
+        }
+      }
+
+      // Apply friction once after all substeps
+      for (const p of pieces) {
+        if (p.pocketed) continue;
+        p.vx *= frictionFactor;
+        p.vy *= frictionFactor;
+        if (Math.hypot(p.vx, p.vy) < MIN_SPEED) {
+          p.vx = 0;
+          p.vy = 0;
         }
       }
     }
@@ -582,7 +588,7 @@
         aimCurrent = pos;
         const dx = aimStart.x - pos.x;
         const dy = aimStart.y - pos.y;
-        power = Math.min(MAX_POWER, Math.hypot(dx, dy) * 0.18);
+        power = Math.min(MAX_POWER, Math.hypot(dx, dy) * 0.32);
         document.getElementById('power-bar').style.width = (power / MAX_POWER * 100) + '%';
       }
     }
@@ -593,11 +599,11 @@
       aiming = false;
       document.getElementById('power-bar-wrap').classList.remove('show');
 
-      if (power > 1.2) {
+      if (power > 0.8) {
         const dx = aimStart.x - aimCurrent.x;
         const dy = aimStart.y - aimCurrent.y;
         const len = Math.hypot(dx, dy) || 1;
-        const speed = power;
+        const speed = Math.max(power, 4); // ensure minimum hit strength
         striker.vx = (dx / len) * speed;
         striker.vy = (dy / len) * speed;
         gameState = 'shooting';
