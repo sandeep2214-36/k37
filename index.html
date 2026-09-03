@@ -124,9 +124,10 @@
       <button class="btn" id="start-btn">TAP TO PLAY</button>
       <div class="controls-hint">
         ← → or Swipe : Change lane<br>
-        ↑ or Swipe Up : Jump (hurdles &amp; aliens)<br>
+        ↑ or Swipe Up : Jump (hurdles, aliens &amp; fox)<br>
         ↓ or Swipe Down : Slide<br>
-        <span style="color:#39ff14">⚠ Aliens can appear suddenly!</span>
+        <span style="color:#39ff14">⚠ Aliens appear suddenly!</span><br>
+        <span style="color:#e67e22">🦊 Fox chases you from behind!</span>
       </div>
     </div>
 
@@ -176,6 +177,11 @@
     const ALIEN_SPAWN_INTERVAL = 4.5;      // seconds between possible spawns
     const ALIEN_SPAWN_CHANCE = 0.55;       // chance when timer hits
 
+    // Fox chase
+    const FOX_SPAWN_MIN_DIST = 120;        // fox starts chasing after this distance
+    const FOX_SPAWN_INTERVAL = 11;         // seconds between fox appearances
+    const FOX_CATCH_DISTANCE = 1.4;        // how close = caught
+
     // ============================================================
     // STATE
     // ============================================================
@@ -185,6 +191,7 @@
     let obstacles = [];
     let coins = [];
     let aliens = [];
+    let fox = null;                        // single chasing fox
     let segments = [];
 
     let gameState = 'menu'; // menu | playing | gameover
@@ -194,6 +201,7 @@
     let speed = BASE_SPEED;
     let collectedCoinBonus = 0;
     let alienSpawnTimer = 0;
+    let foxSpawnTimer = 0;
 
     // Player physics
     let currentLane = 1;           // 0=left, 1=center, 2=right
@@ -597,6 +605,121 @@
     }
 
     // ============================================================
+    // FOX (sudden chase)
+    // ============================================================
+    function createFox() {
+      const foxGroup = new THREE.Group();
+
+      // Body
+      const bodyMat = new THREE.MeshStandardMaterial({
+        color: 0xe67e22,
+        roughness: 0.7,
+        metalness: 0.05
+      });
+      const body = new THREE.Mesh(new THREE.SphereGeometry(0.45, 14, 10), bodyMat);
+      body.scale.set(1.4, 0.85, 0.9);
+      body.position.y = 0.75;
+      body.castShadow = true;
+      foxGroup.add(body);
+
+      // Head
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 12, 10), bodyMat);
+      head.position.set(0, 1.05, 0.45);
+      head.castShadow = true;
+      foxGroup.add(head);
+
+      // Snout
+      const snoutMat = new THREE.MeshStandardMaterial({ color: 0xd35400 });
+      const snout = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.35, 8), snoutMat);
+      snout.rotation.x = Math.PI / 2;
+      snout.position.set(0, 0.95, 0.75);
+      foxGroup.add(snout);
+
+      // Ears
+      const earMat = new THREE.MeshStandardMaterial({ color: 0xc0392b });
+      const earGeo = new THREE.ConeGeometry(0.12, 0.35, 6);
+      const leftEar = new THREE.Mesh(earGeo, earMat);
+      leftEar.position.set(-0.18, 1.4, 0.4);
+      leftEar.rotation.z = -0.25;
+      foxGroup.add(leftEar);
+      const rightEar = new THREE.Mesh(earGeo, earMat);
+      rightEar.position.set(0.18, 1.4, 0.4);
+      rightEar.rotation.z = 0.25;
+      foxGroup.add(rightEar);
+
+      // Eyes
+      const eyeMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a });
+      const eyeGeo = new THREE.SphereGeometry(0.07, 8, 6);
+      const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+      leftEye.position.set(-0.12, 1.12, 0.68);
+      foxGroup.add(leftEye);
+      const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+      rightEye.position.set(0.12, 1.12, 0.68);
+      foxGroup.add(rightEye);
+
+      // Legs
+      const legMat = new THREE.MeshStandardMaterial({ color: 0xd35400 });
+      const legGeo = new THREE.CylinderGeometry(0.07, 0.09, 0.55, 6);
+      const legPositions = [
+        [-0.28, 0.28, 0.2],
+        [0.28, 0.28, 0.2],
+        [-0.28, 0.28, -0.25],
+        [0.28, 0.28, -0.25]
+      ];
+      legPositions.forEach(pos => {
+        const leg = new THREE.Mesh(legGeo, legMat);
+        leg.position.set(...pos);
+        leg.castShadow = true;
+        foxGroup.add(leg);
+      });
+
+      // Tail (bushy)
+      const tailMat = new THREE.MeshStandardMaterial({ color: 0xe67e22 });
+      const tail = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), tailMat);
+      tail.scale.set(0.7, 0.7, 1.6);
+      tail.position.set(0, 0.85, -0.7);
+      tail.rotation.x = -0.4;
+      foxGroup.add(tail);
+
+      // White tip on tail
+      const tip = new THREE.Mesh(
+        new THREE.SphereGeometry(0.12, 8, 6),
+        new THREE.MeshStandardMaterial({ color: 0xf5f5f5 })
+      );
+      tip.position.set(0, 0.7, -1.15);
+      foxGroup.add(tip);
+
+      foxGroup.userData = { runPhase: 0 };
+      return foxGroup;
+    }
+
+    function spawnFox() {
+      if (fox) {
+        scene.remove(fox.mesh);
+        fox = null;
+      }
+
+      const mesh = createFox();
+      // Spawn behind the player so it chases from behind
+      const startZ = 8 + Math.random() * 4;
+      const lane = targetLane;
+      mesh.position.set(LANES[lane], 0, startZ);
+      // Face toward the run direction (negative Z)
+      mesh.rotation.y = Math.PI;
+      scene.add(mesh);
+
+      fox = {
+        mesh,
+        lane,
+        targetLane: lane,
+        z: startZ,
+        speed: speed * 1.15, // slightly faster than player so it catches up
+        alive: true,
+        lifetime: 9 // disappears after some time if not caught
+      };
+    }
+
+    // ============================================================
     // GAME FLOW
     // ============================================================
     function startGame() {
@@ -606,6 +729,7 @@
       speed = BASE_SPEED;
       collectedCoinBonus = 0;
       alienSpawnTimer = 2.5; // first possible alien after a short delay
+      foxSpawnTimer = 6;
       currentLane = 1;
       targetLane = 1;
       playerY = 0;
@@ -626,6 +750,12 @@
       // Clear aliens
       aliens.forEach(a => scene.remove(a.mesh));
       aliens = [];
+
+      // Clear fox
+      if (fox) {
+        scene.remove(fox.mesh);
+        fox = null;
+      }
 
       // Rebuild track
       for (let i = 0; i < VISIBLE_SEGMENTS; i++) {
@@ -805,6 +935,48 @@
         }
       }
 
+      // ----- Fox chase (sudden) -----
+      if (distance > FOX_SPAWN_MIN_DIST) {
+        foxSpawnTimer -= dt;
+        if (foxSpawnTimer <= 0 && !fox) {
+          spawnFox();
+          foxSpawnTimer = FOX_SPAWN_INTERVAL * (0.8 + Math.random() * 0.5);
+        }
+      }
+
+      if (fox && fox.alive) {
+        fox.lifetime -= dt;
+
+        // Chase player's lane
+        if (Math.random() < 0.03) {
+          fox.targetLane = targetLane;
+        }
+        // Smooth lane change
+        const foxTargetX = LANES[fox.targetLane];
+        const fdx = foxTargetX - fox.mesh.position.x;
+        if (Math.abs(fdx) > 0.08) {
+          fox.mesh.position.x += Math.sign(fdx) * Math.min(Math.abs(fdx), 9 * dt);
+        } else {
+          fox.mesh.position.x = foxTargetX;
+          fox.lane = fox.targetLane;
+        }
+
+        // Move toward player (decrease z toward 0)
+        fox.z -= fox.speed * dt;
+        fox.mesh.position.z = fox.z;
+
+        // Run animation bob
+        fox.mesh.userData.runPhase += dt * 14;
+        const runBob = Math.abs(Math.sin(fox.mesh.userData.runPhase)) * 0.12;
+        fox.mesh.position.y = runBob;
+
+        // Despawn if lifetime over or went too far past
+        if (fox.lifetime <= 0 || fox.z < -8) {
+          scene.remove(fox.mesh);
+          fox = null;
+        }
+      }
+
       // ----- Player horizontal (lane) -----
       const targetX = LANES[targetLane];
       const dx = targetX - player.position.x;
@@ -956,6 +1128,22 @@
         if (playerY < 1.1) {
           gameOver();
           return;
+        }
+      }
+
+      // ----- Fox chase catch -----
+      if (fox && fox.alive) {
+        const fx = fox.mesh.position.x;
+        const fz = fox.mesh.position.z;
+
+        // Fox is behind / near player
+        if (fz > -1.5 && fz < FOX_CATCH_DISTANCE) {
+          const laneDist = Math.abs(fx - pX);
+          // Jumping high helps briefly escape
+          if (laneDist < 1.25 && playerY < 1.0) {
+            gameOver();
+            return;
+          }
         }
       }
     }
