@@ -230,10 +230,10 @@
 
     function toBoard(clientX, clientY) {
       const rect = canvas.getBoundingClientRect();
-      return {
-        x: (clientX - rect.left) / scale,
-        y: (clientY - rect.top) / scale
-      };
+      // Use displayed size so touch works correctly on all screens
+      const x = ((clientX - rect.left) / rect.width) * BOARD;
+      const y = ((clientY - rect.top) / rect.height) * BOARD;
+      return { x, y };
     }
 
     // ============================================================
@@ -552,71 +552,102 @@
     }
 
     // ============================================================
-    // INPUT
+    // INPUT (Pointer Events = mouse + touch unified)
     // ============================================================
-    function onPointerDown(e) {
-      if (gameState !== 'aiming') return;
-      e.preventDefault();
-      const pos = toBoard(e.clientX || e.touches[0].clientX, e.clientY || e.touches[0].clientY);
+    function getEventPos(e) {
+      // Works for pointer, mouse, and touch events
+      if (e.touches && e.touches.length > 0) {
+        return toBoard(e.touches[0].clientX, e.touches[0].clientY);
+      }
+      if (e.changedTouches && e.changedTouches.length > 0) {
+        return toBoard(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
+      }
+      return toBoard(e.clientX, e.clientY);
+    }
 
-      // First: allow moving striker on baseline
+    function onPointerDown(e) {
+      if (gameState !== 'aiming' || !striker) return;
+      e.preventDefault();
+      e.stopPropagation();
+
+      const pos = getEventPos(e);
+
+      // Generous hit area for touch
       if (isOnStriker(pos) || isOnBaseline(pos)) {
-        // Move striker horizontally
         const minX = RIM + STRIKER_R + 8;
         const maxX = BOARD - RIM - STRIKER_R - 8;
         striker.x = Math.max(minX, Math.min(maxX, pos.x));
         strikerBaseX = striker.x;
         aiming = true;
         aimStart = { x: striker.x, y: striker.y };
-        aimCurrent = { ...aimStart };
+        aimCurrent = { x: striker.x, y: striker.y };
         power = 0;
         document.getElementById('power-bar-wrap').classList.add('show');
+
+        // Capture pointer so move/up work even outside canvas
+        if (e.pointerId != null && canvas.setPointerCapture) {
+          try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
+        }
       }
     }
 
     function onPointerMove(e) {
-      if (!aiming || gameState !== 'aiming') return;
+      if (!aiming || gameState !== 'aiming' || !striker) return;
       e.preventDefault();
-      const pos = toBoard(e.clientX || e.touches[0].clientX, e.clientY || e.touches[0].clientY);
+      e.stopPropagation();
 
-      // If still near baseline and not pulled much, just slide striker
+      const pos = getEventPos(e);
+      const baseY = currentTurn === 'white' ? STRIKER_Y_WHITE : STRIKER_Y_BLACK;
+
+      // Still near baseline → slide striker left/right
+      // Pull threshold higher for fat fingers
+      const pullY = Math.abs(pos.y - baseY);
       const pullDist = Math.hypot(pos.x - striker.x, pos.y - striker.y);
-      if (pullDist < 25 && Math.abs(pos.y - striker.y) < 30) {
+
+      if (pullY < 45 && pullDist < 50) {
         const minX = RIM + STRIKER_R + 8;
         const maxX = BOARD - RIM - STRIKER_R - 8;
         striker.x = Math.max(minX, Math.min(maxX, pos.x));
         strikerBaseX = striker.x;
         aimStart = { x: striker.x, y: striker.y };
-        aimCurrent = { ...aimStart };
+        aimCurrent = { x: striker.x, y: striker.y };
         power = 0;
+        document.getElementById('power-bar').style.width = '0%';
       } else {
-        // Aim opposite to drag (like real carrom – pull back to shoot forward)
+        // Pull back to aim
         aimCurrent = pos;
         const dx = aimStart.x - pos.x;
         const dy = aimStart.y - pos.y;
         const pull = Math.hypot(dx, dy);
-        // Map pull distance (0–180px board units) → 0–1 power
-        power = Math.min(1, pull / 140);
+        power = Math.min(1, pull / 120);
         document.getElementById('power-bar').style.width = (power * 100) + '%';
       }
     }
 
     function onPointerUp(e) {
-      if (!aiming || gameState !== 'aiming') return;
+      if (!aiming) return;
       e.preventDefault();
+      e.stopPropagation();
+
+      const wasAiming = aiming;
       aiming = false;
       document.getElementById('power-bar-wrap').classList.remove('show');
 
-      if (power > 0.06 && aimCurrent) {
+      if (e.pointerId != null && canvas.releasePointerCapture) {
+        try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+      }
+
+      if (wasAiming && gameState === 'aiming' && power > 0.05 && aimStart && aimCurrent) {
         const dx = aimStart.x - aimCurrent.x;
         const dy = aimStart.y - aimCurrent.y;
         const len = Math.hypot(dx, dy) || 1;
-        // power 0..1 → speed up to MAX_SPEED
-        const speed = 120 + power * (MAX_SPEED - 120);
-        striker.vx = (dx / len) * speed;
-        striker.vy = (dy / len) * speed;
-        gameState = 'shooting';
-        pocketedThisTurn = [];
+        if (len > 8) {
+          const speed = 120 + power * (MAX_SPEED - 120);
+          striker.vx = (dx / len) * speed;
+          striker.vy = (dy / len) * speed;
+          gameState = 'shooting';
+          pocketedThisTurn = [];
+        }
       }
       power = 0;
       aimStart = null;
@@ -625,21 +656,32 @@
 
     function isOnStriker(pos) {
       if (!striker) return false;
-      return Math.hypot(pos.x - striker.x, pos.y - striker.y) < STRIKER_R + 20;
+      // Large hit radius for touch
+      return Math.hypot(pos.x - striker.x, pos.y - striker.y) < STRIKER_R + 55;
     }
 
     function isOnBaseline(pos) {
       const y = currentTurn === 'white' ? STRIKER_Y_WHITE : STRIKER_Y_BLACK;
-      return Math.abs(pos.y - y) < 40 && pos.x > RIM && pos.x < BOARD - RIM;
+      // Wide touch strip along baseline
+      return Math.abs(pos.y - y) < 70 && pos.x > RIM - 10 && pos.x < BOARD - RIM + 10;
     }
 
-    canvas.addEventListener('mousedown', onPointerDown);
-    canvas.addEventListener('mousemove', onPointerMove);
-    canvas.addEventListener('mouseup', onPointerUp);
-    canvas.addEventListener('mouseleave', onPointerUp);
+    // Pointer Events (best for mouse + touch)
+    canvas.style.touchAction = 'none';
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerUp);
+    canvas.addEventListener('pointerleave', (e) => {
+      // only end if we lost capture
+      if (aiming && e.pointerType === 'mouse') onPointerUp(e);
+    });
+
+    // Fallback touch events (older browsers)
     canvas.addEventListener('touchstart', onPointerDown, { passive: false });
     canvas.addEventListener('touchmove', onPointerMove, { passive: false });
     canvas.addEventListener('touchend', onPointerUp, { passive: false });
+    canvas.addEventListener('touchcancel', onPointerUp, { passive: false });
 
     // ============================================================
     // DRAWING
